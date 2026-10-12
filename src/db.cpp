@@ -79,6 +79,7 @@ void DB::recover() {
       fs::remove(dir_ / segment_name(id));
       return true;
     });
+    sync_dir(dir_);  // same ordering rule as in compact()
     for (uint32_t id : compacted) {
       const fs::path src = dir_ / (segment_name(id).substr(0, 10) + ".compact");
       if (id == b) {
@@ -299,7 +300,7 @@ void DB::sync() {
 // takes the id of the newest sealed segment. Crash safety comes from file names:
 //   1. write NNN.compact.tmp and fsync it   (crash: tmp is deleted on open)
 //   2. rename to NNN.compact, fsync dir     (commit point)
-//   3. delete old segments <= NNN, rename NNN.compact -> NNN.data, fsync dir
+//   3. delete old segments <= NNN, fsync dir, rename NNN.compact -> NNN.data, fsync dir
 //      (crash: open finishes step 3 itself)
 // Writers keep appending to the active segment, and readers keep reading, while
 // the new segment is being written.
@@ -392,6 +393,9 @@ CompactionResult DB::compact() {
   }
 
   for (const auto& [id, f] : sealed) fs::remove(dir_ / segment_name(id));
+  // The unlinks must be durable before NNN.compact disappears; otherwise a crash
+  // could leave old segments next to the compacted one and resurrect deleted keys.
+  sync_dir(dir_);
   fs::rename(commit_path, dir_ / segment_name(out_id));
   sync_dir(dir_);
   result.bytes_after = out->size();

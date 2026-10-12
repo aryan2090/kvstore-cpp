@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: release
+            flags: -DCMAKE_BUILD_TYPE=Release
+          - name: tsan
+            flags: -DCMAKE_BUILD_TYPE=Debug -DKV_SANITIZE=thread
+          - name: asan-ubsan
+            flags: -DCMAKE_BUILD_TYPE=Debug -DKV_SANITIZE=address
+    name: ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build ${{ matrix.flags }}
+      - name: Build
+        run: cmake --build build -j
+      - name: Test
+        working-directory: build
+        run: ctest -j4 --output-on-failure
+      - name: Smoke-run CLI and benchmark
+        if: matrix.name == 'release'
+        run: |
+          ./build/kvcli /tmp/kvci put hello world
+          test "$(./build/kvcli /tmp/kvci get hello)" = world
+          ./build/kvbench --threads 2 --ops 10000 --dir /tmp/kvbench
